@@ -1,0 +1,12 @@
+[package]
+name = "rookcli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.29.0"
+k8s-openapi = { version = "0.27.1", features = ["v1_33"] }
+kube = { version = "3.1.0", features = ["client", "rustls-tls"] }
+ratatui = "0.30.0"
+serde_yaml = "0.9"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
