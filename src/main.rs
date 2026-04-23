@@ -64,10 +64,18 @@ async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     let (tx, mut rx) = mpsc::channel(100);
     let (action_tx, mut action_rx) = mpsc::channel(100);
-    
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+
+    std::thread::spawn(move || {
+        while let Ok(event) = events::read_terminal_event() {
+            if event_tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+
     // Spawn background worker for K8s polling and actions
     tokio::spawn(async move {
         let client_res = Client::try_default().await;
@@ -77,18 +85,21 @@ async fn run_app(
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
-                            // Poll Clusters
-                            match k8s::get_ceph_health(&client).await {
+                            let (clusters, pools, pods) = tokio::join!(
+                                k8s::get_ceph_health(&client),
+                                k8s::get_ceph_pools(&client),
+                                k8s::get_pods(&client),
+                            );
+
+                            match clusters {
                                 Ok(clusters) => { let _ = tx.send(Message::UpdateClusters(clusters)).await; }
                                 Err(e) => { let _ = tx.send(Message::Error(format!("K8s clusters error: {}", e))).await; }
                             }
-                            // Poll Pools
-                            match k8s::get_ceph_pools(&client).await {
+                            match pools {
                                 Ok(pools) => { let _ = tx.send(Message::UpdatePools(pools)).await; }
                                 Err(e) => { let _ = tx.send(Message::Error(format!("K8s pools error: {}", e))).await; }
                             }
-                            // Poll Pods
-                            match k8s::get_pods(&client).await {
+                            match pods {
                                 Ok(pods) => { let _ = tx.send(Message::UpdatePods(pods)).await; }
                                 Err(e) => { let _ = tx.send(Message::Error(format!("K8s pods error: {}", e))).await; }
                             }
@@ -148,28 +159,42 @@ async fn run_app(
         }
     });
 
+    terminal.draw(|f| {
+        ui::render(f, app);
+    })?;
+
     while app.is_running {
-        // Handle background updates
-        while let Ok(msg) = rx.try_recv() {
-            match msg {
-                Message::UpdateClusters(clusters) => app.clusters = clusters,
-                Message::UpdatePools(pools) => app.pools = pools,
-                Message::UpdatePods(pods) => app.pods = pods,
-                Message::UpdateLogs(logs) => app.logs = logs,
-                Message::UpdateDescribe(content) => app.describe_content = content,
-                Message::Error(e) => app.error_message = Some(e),
+        tokio::select! {
+            Some(msg) = rx.recv() => {
+                match msg {
+                    Message::UpdateClusters(clusters) => app.clusters = clusters,
+                    Message::UpdatePools(pools) => app.pools = pools,
+                    Message::UpdatePods(pods) => app.pods = pods,
+                    Message::UpdateLogs(logs) => app.logs = logs,
+                    Message::UpdateDescribe(content) => app.set_describe_content(content),
+                    Message::Error(e) => app.error_message = Some(e),
+                }
+                while let Ok(msg) = rx.try_recv() {
+                    match msg {
+                        Message::UpdateClusters(clusters) => app.clusters = clusters,
+                        Message::UpdatePools(pools) => app.pools = pools,
+                        Message::UpdatePods(pods) => app.pods = pods,
+                        Message::UpdateLogs(logs) => app.logs = logs,
+                        Message::UpdateDescribe(content) => app.set_describe_content(content),
+                        Message::Error(e) => app.error_message = Some(e),
+                    }
+                }
+            }
+            Some(event) = event_rx.recv() => {
+                if events::handle_terminal_event(app, &action_tx, event)? {
+                    break;
+                }
             }
         }
 
         terminal.draw(|f| {
             ui::render(f, app);
         })?;
-
-        if events::handle_events(app, &action_tx)? {
-            break;
-        }
-        
-        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
     Ok(())
