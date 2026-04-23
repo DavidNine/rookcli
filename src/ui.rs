@@ -74,7 +74,7 @@ fn render_describe(f: &mut Frame, app: &App, area: Rect) {
         " Describe (No pod selected) ".to_string()
     };
 
-    let paragraph = Paragraph::new(app.describe_content.clone())
+    let paragraph = Paragraph::new(app.describe_content.as_str())
         .block(Block::default().borders(Borders::ALL).title(title))
         .scroll((app.describe_scroll, 0));
         
