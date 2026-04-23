@@ -1,5 +1,5 @@
 use kube::{Client, api::{Api, ApiResource, DynamicObject, ListParams, LogParams, DeleteParams}, core::GroupVersionKind};
-use k8s_openapi::api::core::v1::{Pod, PodSpec, Container, Event};
+use k8s_openapi::api::core::v1::{Event, Pod};
 
 #[derive(Debug, Clone)]
 pub struct CephInfo {
