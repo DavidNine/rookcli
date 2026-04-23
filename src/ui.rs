@@ -39,7 +39,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     match app.active_tab {
-        Tab::Clusters => render_clusters_table(f, app, area),
+        Tab::Clusters => render_clusters_view(f, app, area),
         Tab::Pools => render_pools_table(f, app, area),
         Tab::Pods => render_pods_table(f, app, area),
         Tab::Logs => render_logs(f, app, area),
@@ -144,11 +144,51 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+fn render_clusters_view(f: &mut Frame, app: &mut App, area: Rect) {
+    let cluster_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .split(area);
+
+    render_cluster_health_summary(f, app, cluster_chunks[0]);
+    render_clusters_table(f, app, cluster_chunks[1]);
+}
+
+fn render_cluster_health_summary(f: &mut Frame, app: &App, area: Rect) {
+    let ok_count = app
+        .clusters
+        .iter()
+        .filter(|cluster| matches!(health_level(&cluster.health), HealthLevel::Ok))
+        .count();
+    let warn_count = app
+        .clusters
+        .iter()
+        .filter(|cluster| matches!(health_level(&cluster.health), HealthLevel::Warn))
+        .count();
+    let err_count = app
+        .clusters
+        .iter()
+        .filter(|cluster| matches!(health_level(&cluster.health), HealthLevel::Error))
+        .count();
+    let unknown_count = app.clusters.len().saturating_sub(ok_count + warn_count + err_count);
+
+    let summary = Paragraph::new(Line::from(vec![
+        Span::styled("Health Overview  ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(format!("OK: {}  ", ok_count), Style::default().fg(Color::Green)),
+        Span::styled(format!("WARN: {}  ", warn_count), Style::default().fg(Color::Yellow)),
+        Span::styled(format!("ERROR: {}  ", err_count), Style::default().fg(Color::Red)),
+        Span::styled(format!("UNKNOWN: {}", unknown_count), Style::default().fg(Color::Gray)),
+    ]))
+    .block(Block::default().borders(Borders::ALL).title(" Cluster Health Summary "));
+
+    f.render_widget(summary, area);
+}
+
 fn render_clusters_table(f: &mut Frame, app: &mut App, area: Rect) {
     let running_pods = app.pods.iter().filter(|p| p.status == "Running").count();
     let total_pods = app.pods.len();
 
-    let header_cells = ["Cluster Name", "Health Status", "Running Pods"]
+    let header_cells = ["Cluster Name", "Health", "Status Detail", "Running Pods"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan)));
     let header = Row::new(header_cells)
@@ -156,30 +196,53 @@ fn render_clusters_table(f: &mut Frame, app: &mut App, area: Rect) {
         .height(1);
 
     let rows = app.clusters.iter().map(|c| {
-        let health_color = match c.health.as_str() {
-            "HEALTH_OK" | "OK" => Color::Green,
-            "HEALTH_WARN" | "WARN" => Color::Yellow,
-            "HEALTH_ERR" | "ERR" | "ERROR" => Color::Red,
-            _ => Color::Gray,
-        };
-        
+        let (health_label, health_color) = health_badge(&c.health);
+
         Row::new(vec![
             Cell::from(c.name.clone()),
+            Cell::from(health_label).style(Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
             Cell::from(c.health.clone()).style(Style::default().fg(health_color)),
             Cell::from(format!("{}/{}", running_pods, total_pods)),
         ])
     });
 
     let table = Table::new(rows, [
-        Constraint::Percentage(40),
         Constraint::Percentage(30),
-        Constraint::Percentage(30),
+        Constraint::Percentage(18),
+        Constraint::Percentage(27),
+        Constraint::Percentage(25),
     ])
     .header(header)
     .block(Block::default().borders(Borders::ALL).title(" Ceph Clusters "))
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_stateful_widget(table, area, &mut app.cluster_state);
+}
+
+#[derive(Clone, Copy)]
+enum HealthLevel {
+    Ok,
+    Warn,
+    Error,
+    Unknown,
+}
+
+fn health_level(health: &str) -> HealthLevel {
+    match health {
+        "HEALTH_OK" | "OK" => HealthLevel::Ok,
+        "HEALTH_WARN" | "WARN" => HealthLevel::Warn,
+        "HEALTH_ERR" | "ERR" | "ERROR" => HealthLevel::Error,
+        _ => HealthLevel::Unknown,
+    }
+}
+
+fn health_badge(health: &str) -> (&'static str, Color) {
+    match health_level(health) {
+        HealthLevel::Ok => ("[OK]", Color::Green),
+        HealthLevel::Warn => ("[WARN]", Color::Yellow),
+        HealthLevel::Error => ("[ERROR]", Color::Red),
+        HealthLevel::Unknown => ("[UNKNOWN]", Color::Gray),
+    }
 }
 
 fn render_pools_table(f: &mut Frame, app: &mut App, area: Rect) {
