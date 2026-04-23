@@ -10,9 +10,17 @@ pub enum Tab {
     Describe,
 }
 
+pub const ALL_TABS: [Tab; 5] = [
+    Tab::Clusters,
+    Tab::Pools,
+    Tab::Pods,
+    Tab::Logs,
+    Tab::Describe,
+];
+
 impl Tab {
-    pub fn all() -> Vec<Tab> {
-        vec![Tab::Clusters, Tab::Pools, Tab::Pods, Tab::Logs, Tab::Describe]
+    pub fn all() -> &'static [Tab] {
+        &ALL_TABS
     }
 
     pub fn to_index(&self) -> usize {
@@ -45,6 +53,7 @@ pub struct App {
     pub selected_pod: Option<String>,
     pub logs: Vec<String>,
     pub describe_content: String,
+    pub describe_line_count: u16,
     
     pub cluster_state: TableState,
     pub pool_state: TableState,
@@ -73,6 +82,7 @@ impl App {
             selected_pod: None,
             logs: Vec::new(),
             describe_content: String::new(),
+            describe_line_count: 0,
             cluster_state,
             pool_state,
             pod_state,
@@ -131,7 +141,7 @@ impl App {
                 if self.describe_scroll > 0 {
                     self.describe_scroll -= 1;
                 } else {
-                    self.describe_scroll = (self.describe_content.lines().count() as u16).saturating_sub(1);
+                    self.describe_scroll = self.describe_line_count.saturating_sub(1);
                 }
             }
         }
@@ -175,8 +185,7 @@ impl App {
                 }
             }
             Tab::Describe => {
-                let total_lines = self.describe_content.lines().count() as u16;
-                if self.describe_scroll < total_lines.saturating_sub(1) {
+                if self.describe_scroll < self.describe_line_count.saturating_sub(1) {
                     self.describe_scroll += 1;
                 } else {
                     self.describe_scroll = 0;
@@ -215,5 +224,10 @@ impl App {
             Tab::Pods => self.pod_state.selected().unwrap_or(0),
             Tab::Logs | Tab::Describe => 0,
         }
+    }
+
+    pub fn set_describe_content(&mut self, content: String) {
+        self.describe_line_count = content.lines().count() as u16;
+        self.describe_content = content;
     }
 }
